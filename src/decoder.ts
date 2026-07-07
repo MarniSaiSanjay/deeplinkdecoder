@@ -34,14 +34,18 @@ export interface DecodedLink {
   linkKind: string;
   host: string;
   path: string;
+  /** Host family: "M365", "Word", "UDL", "App Store", or "Other". */
+  surface: string;
+  /** UDL delivery mode ("app" or "mweb"), when this is a Unified Deep Link. */
+  udlMode?: string;
+  /** UDL target app (e.g. "copilot"), when this is a Unified Deep Link. */
+  udlApp?: string;
   /** Entity GUID from the /chat/entity1-<guid>/ route, when present. */
   entityId?: string;
-  /** The decoded JSON payload object, when the link carries one. */
-  payload?: Record<string, unknown>;
-  /** Pretty-printed JSON of the payload. */
-  payloadJson?: string;
   /** Parsed substrate identifier from payload.id. */
   substrate?: SubstrateIdentifier;
+  /** Pretty-printed JSON of the payload. */
+  payloadJson?: string;
   /** Query-string parameters. */
   queryParams: KeyValue[];
   /** Non-fatal notes surfaced to the user. */
@@ -130,8 +134,41 @@ function parseQuery(search: string): KeyValue[] {
   return out;
 }
 
+const UDL_HOST = "unifiedlink.svc.cloud.microsoft";
+const M365_HOST = "m365.cloud.microsoft";
+const WORD_HOST = "word.cloud.microsoft";
+
+interface HostInfo {
+  surface: string;
+  /** Path with any UDL "/{mode}/{app}" prefix stripped, so downstream matching is host-agnostic. */
+  effectivePath: string;
+  udlMode?: string;
+  udlApp?: string;
+}
+
 /**
- * Decode a Microsoft 365 / Word deep link. Throws on input that is not a URL.
+ * Classify the host and, for UDL links, peel off the "/{mode}/{app}" prefix so
+ * the shared chat/handoff/base matchers work across M365, Word and UDL.
+ */
+function classifyHost(url: URL): HostInfo {
+  const host = url.host;
+  if (host.includes(UDL_HOST)) {
+    // UDL path shape: /{mode}/{app}/<rest>, e.g. /app/copilot/chat/...
+    const m = url.pathname.match(/^\/(app|mweb)\/([^/]+)(\/.*)?$/);
+    if (m) {
+      return { surface: "UDL", udlMode: m[1], udlApp: m[2], effectivePath: m[3] || "/" };
+    }
+    return { surface: "UDL", effectivePath: url.pathname };
+  }
+  if (host.includes(WORD_HOST)) return { surface: "Word", effectivePath: url.pathname };
+  if (host.includes(M365_HOST)) return { surface: "M365", effectivePath: url.pathname };
+  if (host.includes("apps.apple.com")) return { surface: "App Store", effectivePath: url.pathname };
+  if (host.includes("play.google.com")) return { surface: "App Store", effectivePath: url.pathname };
+  return { surface: "Other", effectivePath: url.pathname };
+}
+
+/**
+ * Decode a Microsoft 365 / Word / UDL deep link. Throws on input that is not a URL.
  */
 export function decodeDeepLink(rawUrl: string): DecodedLink {
   const trimmed = rawUrl.trim();
@@ -148,17 +185,23 @@ export function decodeDeepLink(rawUrl: string): DecodedLink {
 
   const notes: string[] = [];
   const queryParams = parseQuery(url.search.replace(/^\?/, ""));
+  const { surface, effectivePath, udlMode, udlApp } = classifyHost(url);
   const result: DecodedLink = {
     linkKind: "Unknown",
     host: url.host,
     path: url.pathname,
+    surface,
+    udlMode,
+    udlApp,
     queryParams,
     notes,
   };
+  // Prefix used in link-kind labels so the surface is obvious.
+  const label = surface === "UDL" ? `UDL${udlApp ? ` (${udlApp})` : ""}` : surface;
 
   // Word handoff link — payload is in the handinPayload query param.
-  if (url.pathname.includes("/handoff/growth")) {
-    result.linkKind = "Word handoff (growth)";
+  if (effectivePath.includes("/handoff/growth")) {
+    result.linkKind = `${label} handoff (growth)`;
     // The handinPayload param is the payload itself; show it decoded, not raw.
     result.queryParams = queryParams.filter((kv) => kv.key !== "handinPayload");
     const handin = url.searchParams.get("handinPayload");
@@ -166,7 +209,6 @@ export function decodeDeepLink(rawUrl: string): DecodedLink {
       try {
         const json = base64ToUtf8(decodeURIComponent(handin));
         const payload = JSON.parse(json) as Record<string, unknown>;
-        result.payload = payload;
         result.payloadJson = JSON.stringify(payload, null, 2);
         if (typeof payload.id === "string") {
           result.substrate = parseSubstrateIdentifier(payload.id);
@@ -175,24 +217,23 @@ export function decodeDeepLink(rawUrl: string): DecodedLink {
         notes.push("Could not decode the handinPayload parameter as base64 JSON.");
       }
     } else {
-      notes.push("No handinPayload parameter found on this Word handoff link.");
+      notes.push("No handinPayload parameter found on this handoff link.");
     }
     return result;
   }
 
-  // M365 chat link with an encoded payload in the path.
-  const chatMatch = url.pathname.match(/\/chat\/entity1-([0-9a-fA-F-]+)\/([^/]+)$/);
+  // Chat link with an encoded payload in the path.
+  const chatMatch = effectivePath.match(/\/chat\/entity1-([0-9a-fA-F-]+)\/([^/]+)$/);
   if (chatMatch) {
-    result.linkKind = "M365 Copilot chat (prompt)";
+    result.linkKind = `${label} Copilot chat (prompt)`;
     result.entityId = chatMatch[1];
     const encodedPayload = chatMatch[2];
     try {
       const json = base64ToUtf8(decodeURIComponent(encodedPayload));
       const payload = JSON.parse(json) as Record<string, unknown>;
-      result.payload = payload;
       result.payloadJson = JSON.stringify(payload, null, 2);
       if (payload.gptInfo && typeof payload.gptInfo === "object") {
-        result.linkKind = "M365 Copilot chat — Researcher with prompt";
+        result.linkKind = `${label} Copilot chat — Researcher with prompt`;
       }
       if (typeof payload.id === "string") {
         result.substrate = parseSubstrateIdentifier(payload.id);
@@ -204,19 +245,26 @@ export function decodeDeepLink(rawUrl: string): DecodedLink {
   }
 
   // Researcher link (no payload, titleId in query).
-  if (url.pathname.endsWith("/chat") || url.pathname.endsWith("/chat/")) {
-    result.linkKind = "M365 Copilot chat (Researcher entry point)";
+  if (effectivePath.endsWith("/chat") || effectivePath.endsWith("/chat/")) {
+    result.linkKind = `${label} Copilot chat (Researcher entry point)`;
     return result;
   }
 
-  if (url.pathname.endsWith("/create")) {
-    result.linkKind = "M365 Copilot create";
+  if (effectivePath.endsWith("/create")) {
+    result.linkKind = `${label} Copilot create`;
+    return result;
+  }
+
+  if (surface === "App Store") {
+    result.linkKind = url.host.includes("apps.apple.com")
+      ? "iOS App Store link"
+      : "Android Play Store link";
     return result;
   }
 
   // Base / marketing link — everything is in the query string.
-  if (url.host.includes("m365.cloud.microsoft")) {
-    result.linkKind = "M365 base link";
+  if (surface === "M365" || surface === "UDL") {
+    result.linkKind = `${label} base link`;
     // The referrer param nests utm_* pairs; surface them.
     const referrer = url.searchParams.get("referrer");
     if (referrer) {
@@ -224,15 +272,6 @@ export function decodeDeepLink(rawUrl: string): DecodedLink {
         notes.push(`referrer → ${kv.key} = ${kv.value}`),
       );
     }
-    return result;
-  }
-
-  if (url.host.includes("apps.apple.com")) {
-    result.linkKind = "iOS App Store link";
-    return result;
-  }
-  if (url.host.includes("play.google.com")) {
-    result.linkKind = "Android Play Store link";
     return result;
   }
 
