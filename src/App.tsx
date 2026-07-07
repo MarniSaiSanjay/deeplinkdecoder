@@ -336,7 +336,7 @@ export default function App() {
           overflow: "hidden",
         }}
       >
-        <div style={{ maxWidth: 1520, margin: "0 auto 0 max(32px, calc((100% - 1520px) / 2 - 80px))", position: "relative", padding: "0 8px" }}>
+        <div style={{ maxWidth: 900, margin: "0 auto", position: "relative", padding: "0 32px", textAlign: "center" }}>
           <div
             style={{
               display: "inline-flex",
@@ -354,17 +354,33 @@ export default function App() {
             <span style={{ width: 7, height: 7, borderRadius: 999, background: "#7ee0a1" }} />
             100% client-side · nothing leaves your browser
           </div>
-          <h1 style={{ margin: 0, fontSize: 34, fontWeight: 800, letterSpacing: -0.5 }}>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 34,
+              fontWeight: 800,
+              letterSpacing: -0.5,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 14,
+            }}
+          >
+            <img
+              src={`${import.meta.env.BASE_URL}icon.png`}
+              alt="Deep Link Decoder logo"
+              style={{ height: 52, width: "auto", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.25))" }}
+            />
             Deep Link Decoder
           </h1>
-          <p style={{ margin: "10px 0 0", fontSize: 15.5, opacity: 0.94, maxWidth: 720, lineHeight: 1.55 }}>
+          <p style={{ margin: "10px auto 0", fontSize: 15.5, opacity: 0.94, maxWidth: 640, lineHeight: 1.55 }}>
             Paste a Microsoft 365 Copilot, Word or Unified Deep Link (UDL) to break it down into its
             payload, encoding, prompt ID, locale and query parameters.
           </p>
         </div>
       </header>
 
-      <main style={{ maxWidth: 1520, margin: "0 auto 0 max(32px, calc((100% - 1520px) / 2 - 80px))", padding: "24px 32px 64px", marginTop: -20 }}>
+      <main style={{ maxWidth: 1520, margin: "0 auto", padding: "24px 32px 64px", marginTop: -20 }}>
         <div className="decoder-layout" data-mode={hasResults ? "split" : "solo"}>
           <div className="decoder-input">
             <Card title="Link">
