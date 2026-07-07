@@ -8,6 +8,8 @@ parameters.
 It is the inverse of the link generator: paste a link, see exactly what it
 encodes. All decoding happens **in the browser** — nothing is sent to a server.
 
+**Live demo:** https://marnisaisanjay.github.io/deeplinkdecoder/
+
 ## What it decodes
 
 - **M365 Copilot chat (prompt)** — `https://m365.cloud.microsoft/chat/entity1-<id>/<payload>?...`
@@ -26,7 +28,20 @@ encodes. All decoding happens **in the browser** — nothing is sent to a server
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # http://localhost:5173/DeepLinkDecoder/
+```
+
+## Project structure
+
+```
+src/
+  decoder.ts      Core decoding logic (the inverse of the link generator)
+  App.tsx         UI: input box + rendered breakdown
+  main.tsx        React entry point + global style reset
+  theme.ts        Shared design tokens
+index.html        Vite HTML entry
+vite.config.ts    Build config (GitHub Pages base path)
+.github/workflows/deploy.yml   CI build + Pages deploy
 ```
 
 ## Build
